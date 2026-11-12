@@ -51,3 +51,4 @@ All publicly shared network information is sanitized. Actual LAN addresses, labo
 
 - [Technical Project Report](PROJECT_REPORT.md) — Architecture, implementation, security design
 - [Network Architecture Diagram](docs/architecture.md)
+- [Security Validation Report](docs/security-validation.md)
