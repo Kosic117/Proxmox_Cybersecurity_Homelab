@@ -245,7 +245,7 @@ This differs intentionally from the Proxmox host, where IPv4 forwarding is disab
 
 ### Evidence
 
-![Debian gateway interfaces and routing](screenshots/03-gateway-routing.png)
+
 
 ---
 
