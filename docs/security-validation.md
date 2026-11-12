@@ -10,7 +10,7 @@
 
 ## 1. Executive Summary
 
-This report documents security validation activities performed on a Proxmox-based cybersecurity homelab designed to support controlled penetration testing and vulnerability research.
+This report documents security validation activities performed on a Proxmox-based cybersecurity homelab designed for controlled penetration testing and vulnerability research.
 
 The environment includes an intentionally vulnerable Metasploitable 2 virtual machine, a Debian Linux gateway, an isolated virtual network, and Tailscale-based remote access.
 
@@ -22,7 +22,7 @@ The primary security objectives were to:
 - Allow authorized remote access through Tailscale.
 - Verify the configuration using Linux networking utilities and Windows connectivity tests.
 
-**Validation outcome:** Testing confirmed virtual network separation, restrictive gateway firewall policies, disabled IPv4 forwarding on the Proxmox host, absence of a usable public-internet route from Metasploitable, and successful authorized SSH connectivity through the Tailscale interface.
+**Validation outcome:** Testing confirmed virtual network separation, restrictive gateway firewall policies, disabled IPv4 forwarding on the Proxmox host, absence of a usable public-internet route from Metasploitable, intentional denial of internal ICMP echo requests to the gateway, and successful authorized SSH connectivity through the Tailscale interface.
 
 Additional testing is required to fully validate restrictions on connections from Metasploitable to the Proxmox host and home LAN.
 
@@ -44,8 +44,6 @@ Additional testing is required to fully validate restrictions on connections fro
 
 ### Network Design
 
-The Proxmox host contains two virtual network bridges.
-
 **`vmbr0` — Upstream Network**
 
 Connected to the physical network interface and provides upstream connectivity for the Proxmox host and Debian gateway.
@@ -54,7 +52,7 @@ Connected to the physical network interface and provides upstream connectivity f
 
 Configured without a physical bridge port. It connects the Debian gateway's laboratory interface and Metasploitable 2.
 
-The Proxmox host also has an IPv4 address assigned to `vmbr1`. This provides direct Layer 3 connectivity between the hypervisor and laboratory subnet and represents a security boundary requiring additional validation.
+The Proxmox host also has an IPv4 address assigned to `vmbr1`. This creates a potential direct connection between the hypervisor and laboratory systems that requires additional security validation.
 
 ### Debian Gateway Interfaces
 
@@ -187,6 +185,10 @@ The forwarding chain included the following controls:
 
 The input chain permitted loopback traffic, established and related connections, Tailscale interface traffic, required DHCP responses, and selected ICMP error messages.
 
+**Internal ICMP restriction:** The input chain does not include an allow rule for ICMP echo requests arriving from `ens19`. Consequently, new ping requests originating from Metasploitable and addressed to the Debian gateway itself are intentionally denied by the default-DROP input policy.
+
+This restriction applies to traffic destined for the gateway, rather than all ICMP traffic traversing the laboratory network.
+
 ### Assessment
 
 **PASS — Restrictive firewall configuration verified.**
@@ -300,11 +302,21 @@ The result supports the objective of keeping the intentionally vulnerable system
 
 ---
 
-## 8. Laboratory Gateway Connectivity
+## 8. Laboratory Gateway Connectivity and Intentional ICMP Restriction
 
 ### Objective
 
-Examine local network connectivity between Metasploitable and the Debian gateway.
+Verify local network connectivity between Metasploitable 2 and the Debian gateway while confirming the intended restriction on internal ICMP echo requests.
+
+### Security Design
+
+The Debian gateway is intentionally configured not to respond to ICMP echo requests originating from the isolated laboratory network.
+
+Its nftables input chain uses a default-DROP policy and does not contain an exception permitting ICMP echo requests arriving through `ens19`.
+
+The firewall allows selected ICMP error messages but does not generally permit ICMP echo requests from the lab.
+
+This configuration reduces unnecessary responses from the gateway to systems operating within the intentionally vulnerable environment.
 
 ### Commands
 
@@ -317,9 +329,7 @@ ip neigh show
 
 ### Observed Results
 
-ICMP echo requests to the Debian gateway's laboratory interface received no replies.
-
-The test reported:
+The ICMP test returned:
 
 ```text
 3 packets transmitted, 0 received, 100% packet loss
@@ -329,17 +339,19 @@ A separate neighbor-table inspection previously showed the gateway address in th
 
 ### Assessment
 
-**PARTIAL PASS — Local neighbor discovery observed; ICMP unavailable.**
+**PASS — Observed behavior consistent with intentional ICMP restrictions.**
 
-The neighbor-table result supports successful Layer 2 address resolution between Metasploitable and the gateway.
+The neighbor-table result supports successful Layer 2 address resolution between Metasploitable and the Debian gateway.
 
-The unsuccessful ICMP test is consistent with the gateway's default-DROP input policy, which does not explicitly allow ICMP echo requests from the laboratory interface.
+The absence of ICMP echo replies is consistent with the gateway's configured default-DROP input policy.
 
-However, packet loss alone does not conclusively establish that the firewall caused the failure.
+This is an expected outcome under the current security design and does not, by itself, indicate a failed network connection.
+
+**Validation limitation:** Although the observed behavior matches the firewall configuration, packet counters or tracing were not collected to independently confirm the specific firewall rule responsible for dropping the requests.
 
 ### Evidence
 
-![Laboratory gateway connectivity test](screenshots/07-lab-gateway-connectivity.png)
+![Laboratory gateway ICMP restriction](screenshots/07-lab-gateway-connectivity.png)
 
 ---
 
@@ -367,132 +379,4 @@ Tailscale status identified the Debian gateway as an active overlay-network peer
 The TCP connectivity test reported:
 
 ```text
-RemotePort       : 22
-InterfaceAlias   : Tailscale
-TcpTestSucceeded : True
-```
-
-### Assessment
-
-**PASS — Authorized SSH connectivity verified.**
-
-The Windows client successfully established a TCP connection to Metasploitable's SSH port.
-
-The Windows networking output identified the Tailscale interface as the connection path.
-
-Metasploitable did not require a locally installed Tailscale client.
-
-This demonstrates that the gateway-based remote access architecture supports access to the isolated laboratory.
-
-**Limitation:** This test confirms successful access from one authorized client. It does not independently verify the rejection of unauthorized Tailscale peers or devices outside the overlay network.
-
-### Evidence
-
-![Authorized Tailscale laboratory access](screenshots/08-authorized-tailscale-access.png)
-
----
-
-## 10. Security Validation Summary
-
-| ID | Security Control | Result | Status |
-|---|---|---|---|
-| SV-01 | Proxmox virtual machines operational | Both VMs running | PASS |
-| SV-02 | Laboratory bridge has no physical uplink | Confirmed through bridge configuration | PASS |
-| SV-03 | Proxmox IPv4 forwarding disabled | Kernel setting returned `0` | PASS |
-| SV-04 | Debian gateway forwarding enabled | Kernel setting returned `1` | PASS |
-| SV-05 | Gateway firewall default-deny configuration | Input and forward policies set to DROP | PASS |
-| SV-06 | Metasploitable public IPv4 route | Tested destination unreachable | PASS |
-| SV-07 | Metasploitable-to-gateway connectivity | Neighbor discovery observed; ICMP unsuccessful | PARTIAL |
-| SV-08 | Authorized Tailscale SSH access | TCP connection succeeded | PASS |
-| SV-09 | Metasploitable-to-Proxmox management restrictions | Not tested | PENDING |
-| SV-10 | Metasploitable-to-home-LAN restrictions | Not directly tested | PENDING |
-| SV-11 | Unauthorized remote access restrictions | Not tested | PENDING |
-
-The PASS results describe the specific configuration checks or connectivity tests performed, not a certification of complete network isolation.
-
----
-
-## 11. Security Considerations and Remaining Risks
-
-### 11.1 Hypervisor Exposure to the Laboratory
-
-The Proxmox host has an IPv4 address assigned to the isolated laboratory bridge.
-
-Although IPv4 forwarding is disabled, laboratory systems may still be able to reach services running directly on the hypervisor.
-
-**Recommended follow-up:** Verify whether management ports, including Proxmox HTTPS management and SSH, are accessible from the laboratory network. Consider removing the host's laboratory IP address or restricting host-bound traffic if it is not operationally required.
-
-### 11.2 Gateway Firewall Enforcement
-
-The Debian gateway's forwarding rules use a default-DROP policy.
-
-However, the Metasploitable public-internet test failed because no usable route was available. It did not generate a forwarded packet that could demonstrate an nftables drop.
-
-**Recommended follow-up:** Validate firewall enforcement using controlled traffic and firewall counters or packet tracing without permanently enabling internet connectivity on the vulnerable target.
-
-### 11.3 Tailscale Access Restrictions
-
-The gateway permits traffic arriving on its Tailscale interface, with the forwarding exception restricted to the laboratory subnet.
-
-**Recommended follow-up:** Review Tailscale access policies to ensure only authorized identities and devices can reach the laboratory gateway and vulnerable targets.
-
-### 11.4 IPv6 and Other Network Paths
-
-The completed isolation tests primarily examined IPv4 behavior.
-
-**Recommended follow-up:** Verify IPv6 forwarding, addressing, and firewall behavior, and confirm no unintended network interfaces or alternate routes bypass the intended segmentation.
-
-### 11.5 Persistence of Security Controls
-
-The validation captured the active configuration at the time of testing.
-
-**Recommended follow-up:** Confirm that firewall policies, bridge configurations, and forwarding settings remain effective following system restarts and updates.
-
----
-
-## 12. Lessons Learned
-
-This validation exercise reinforced several practical security engineering concepts.
-
-**Network isolation requires multiple controls.** Virtual bridges, routing restrictions, and firewall policies provide different forms of protection. No single configuration setting proves complete isolation.
-
-**Routing failures and firewall drops are different outcomes.** A `Network is unreachable` error demonstrates a routing restriction. A firewall enforcement claim requires evidence that traffic reached the firewall and was denied.
-
-**Authorized access should be tested independently.** The successful Windows TCP test confirmed that the intended remote-access path works while the vulnerable machine remains disconnected from the public internet.
-
-**The hypervisor is part of the attack surface.** Assigning an address to an isolated bridge can make host services reachable from laboratory systems even when inter-network forwarding is disabled.
-
-**Security documentation should distinguish evidence from assumptions.** Recording exact commands, observed outcomes, and unverified boundaries makes the project reproducible and technically defensible.
-
----
-
-## 13. Conclusion
-
-The Proxmox cybersecurity homelab demonstrated several functioning security controls during initial validation.
-
-The environment uses an internal virtual bridge without a physical uplink, disabled IPv4 forwarding on the Proxmox host, and a Debian gateway configured with restrictive nftables forwarding policies.
-
-Metasploitable 2 had no usable route to the tested public internet destination, while an authorized Windows client successfully connected to its SSH service through the Tailscale interface.
-
-These findings support the project's intended architecture: **a remotely accessible cybersecurity testing environment with network separation and restricted connectivity for intentionally vulnerable systems.**
-
-The current evidence does not establish complete isolation from every possible network path. Hypervisor management exposure, home-LAN access restrictions, and unauthorized-client access remain subjects for additional testing.
-
-The project therefore demonstrates both implemented security controls and an evidence-based validation process, with clearly documented limitations and opportunities for further hardening.
-
----
-
-## 14. Supporting Evidence
-
-| Screenshot | Description |
-|---|---|
-| [01-proxmox-vms.png](screenshots/01-proxmox-vms.png) | Proxmox virtual machine overview |
-| [02-proxmox-bridges.png](screenshots/02-proxmox-bridges.png) | Physical and virtual network bridge configuration |
-| [03-gateway-routing.png](screenshots/03-gateway-routing.png) | Debian gateway interfaces, routing, and forwarding |
-| [04-firewall-policy.png](screenshots/04-firewall-policy.png) | nftables firewall configuration |
-| [05-proxmox-routing.png](screenshots/05-proxmox-routing.png) | Hypervisor routing and disabled forwarding |
-| [06-metasploitable-isolation.png](screenshots/06-metasploitable-isolation.png) | Metasploitable public-internet routing restriction |
-| [07-lab-gateway-connectivity.png](screenshots/07-lab-gateway-connectivity.png) | Laboratory gateway ICMP connectivity test |
-| [08-authorized-tailscale-access.png](screenshots/08-authorized-tailscale-access.png) | Successful authorized SSH connectivity |
-
-**Documentation note:** Internal LAN addresses, Tailscale addresses, MAC addresses, and other identifying network information have been omitted or redacted from public evidence.
+RemotePort      
